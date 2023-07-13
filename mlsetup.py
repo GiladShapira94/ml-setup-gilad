@@ -817,7 +817,7 @@ class K8sConfig(BaseConfig):
         tag = tag or get_latest_mlrun_tag()
         logging.info(f"Creating kubernetes namespace {namespace}...")
         create_namespace = True
-        if check_k8s_resouce_exciting("namespace",namespace):
+        if self.check_k8s_resouce_exciting("namespace",namespace):
             logging.warning(
                 f"Namespace {namespace} already exists"
             )
@@ -1035,7 +1035,7 @@ class K8sConfig(BaseConfig):
         ]
         new_settings["REGISTRY_SECRET"] = pull_secret
         create_secret = True
-        if check_k8s_resouce_exciting(namespace=namespace,resource="secret",name=pull_secret):
+        if self.check_k8s_resouce_exciting(namespace=namespace,resource="secret",name=pull_secret):
             logging.warning(
                 f"Registry Secret {pull_secret} already exists"
             )
@@ -1066,7 +1066,7 @@ class K8sConfig(BaseConfig):
         returncode, _, _ = self.do_popen(cmd)
         if returncode != 0:
             raise SystemExit(returncode)
-        check_scale(method="pause")
+        self.check_scale(method="pause",namespace=namespace)
         logging.info(f'{",".join(scaled_deplyoments)} are scaled to zero')
 
     def scale(self):
@@ -1079,7 +1079,7 @@ class K8sConfig(BaseConfig):
         returncode, _, _ = self.do_popen(cmd)
         if returncode != 0:
             raise SystemExit(returncode)
-        check_scale(method="scale")
+        self.check_scale(method="scale",namespace=namespace)
         logging.info(f'{",".join(scaled_deplyoments)} are scaled up')
 
     def stop(self, force=None, cleanup=None):
@@ -1140,7 +1140,35 @@ class K8sConfig(BaseConfig):
 
         self.clear_env(cleanup, delete_keys=delete_keys)
 
+    def check_scale(self,method,namespce):
+        i_scale = "1" if method == "scale" else "0"
 
+        def check_scale_status(i_scale,namespce):
+            cmd = ['kubectl', '-n', namespce, 'get', 'deployments.apps']
+            returncode, out, err = BaseConfig(env_file="test").do_popen(cmd, interactive=False)
+            cmd = ['awk', '{print $4}']
+            returncode, out, err = BaseConfig(env_file="test").do_popen(cmd, stdin=out, interactive=False)
+            cmd = ['tail', '-n', "+2"]
+            returncode, out, err = BaseConfig(env_file="test").do_popen(cmd, stdin=out, interactive=False)
+            cmd = ['grep', i_scale]
+            returncode, out, err = BaseConfig(env_file="test").do_popen(cmd, stdin=out, interactive=False)
+            cmd = ['wc', '-l']
+            returncode, out, err = BaseConfig(env_file="test").do_popen(cmd, stdin=out, interactive=False)
+            return int(out)
+
+        stop = check_scale_status(i_scale)
+        while stop < len(scaled_deplyoments):
+            stop = check_scale_status(i_scale)
+
+    def check_k8s_resouce_exciting(self,resource: str, name: str, namespace: str = None):
+        cmd = ["kubectl", "get", resource, name]
+        if namespace:
+            cmd = ["kubectl", "-n", namespace, "get", resource, name]
+        returncode, out, err = BaseConfig(env_file="test").do_popen(cmd, interactive=False)
+        if returncode == 1:
+            return False
+        else:
+            return True
 def _get_ip():
     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     s.settimeout(0)
@@ -1190,32 +1218,7 @@ def get_latest_mlrun_tag():
     except Exception as exc:
         print(f"cant read mlrun releases from {mlrun_releases}, {exc}")
     return ""
-def check_scale(method):
-    i_scale = "1" if method=="scale" else "0"
-    def check_scale_status(i_scale):
-        cmd = ['kubectl', '-n', 'mlrun', 'get', 'deployments.apps']
-        returncode, out, err = BaseConfig(env_file="test").do_popen(cmd,interactive=False)
-        cmd = ['awk', '{print $4}']
-        returncode, out, err = BaseConfig(env_file="test").do_popen(cmd,stdin=out,interactive=False)
-        cmd = ['tail', '-n', "+2"]
-        returncode, out, err = BaseConfig(env_file="test").do_popen(cmd,stdin=out,interactive=False)
-        cmd = ['grep', i_scale]
-        returncode, out, err = BaseConfig(env_file="test").do_popen(cmd,stdin=out,interactive=False)
-        cmd = ['wc', '-l']
-        returncode, out, err = BaseConfig(env_file="test").do_popen(cmd,stdin=out,interactive=False)
-        return int(out)
-    stop = check_scale_status(i_scale)
-    while stop < len(scaled_deplyoments):
-        stop = check_scale_status(i_scale)
-def check_k8s_resouce_exciting(resource :str,name: str,namespace:str =None):
-    cmd = ["kubectl", "get", resource, name]
-    if namespace:
-        cmd = ["kubectl","-n",namespace,"get",resource,name]
-    returncode, out, err = BaseConfig(env_file="test").do_popen(cmd,interactive=False)
-    if returncode==1:
-        return False
-    else:
-        return True
+
 compose_template = """
 services:
   init_nuclio:
